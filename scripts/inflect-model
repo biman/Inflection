@@ -1,0 +1,140 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+Outputs a fully inflected version of a lemmatized test set (provided on STDIN). 
+If training data is provided, it will use a unigram model to select the form.
+
+usage: cat LEMMA_FILE | python inflect
+       [-t TRAINING_PREFIX] [-l LEMMA_SUFFIX] [-w WORD_SUFFIX]
+"""
+
+import argparse
+import codecs
+import sys
+import os
+from collections import defaultdict
+from itertools import izip
+from tree import DepTree
+
+PARSER = argparse.ArgumentParser(description="Inflect a lemmatized corpus")
+PARSER.add_argument("-t", type=str, default="data/train", help="training data prefix")
+PARSER.add_argument("-l", type=str, default="lemma", help="lemma file suffix")
+PARSER.add_argument("-p", type=str, default="tag", help="tag file suffix")
+PARSER.add_argument("-w", type=str, default="form", help="word file suffix")
+PARSER.add_argument("-d", type=str, default="tree", help="tree file suffix")
+args = PARSER.parse_args()
+
+# Python sucks at UTF-8
+sys.stdout = codecs.getwriter('utf-8')(sys.stdout) 
+sys.stdin = codecs.getreader('utf-8')(sys.stdin) 
+
+def inflections(prev_lemma, lemma,lemma_tree,tag):
+    ngram_cnt=[("",0)]
+    tag_cnt=[("",0)]
+    tree_cnt=[("",0)]
+    if LEMMAS_ngram.has_key((prev_lemma,lemma)) :
+        ngram_sorted=sorted(LEMMAS_ngram[(prev_lemma,lemma)].keys(), lambda x,y: cmp(LEMMAS_ngram[(prev_lemma,lemma)][y], LEMMAS_ngram[(prev_lemma,lemma)][x]))
+        ngram_cnt=sorted(LEMMAS_ngram[(prev_lemma,lemma)].items(), lambda x,y: cmp(y[1],x[1]))
+    if LEMMAS_tree.has_key((lemma,lemma_tree)):
+        tree_sorted=sorted(LEMMAS_tree[(lemma,lemma_tree)].keys(), lambda x,y: cmp(LEMMAS_tree[(lemma,lemma_tree)][y], LEMMAS_tree[(lemma,lemma_tree)][x]))
+        tree_cnt=sorted(LEMMAS_tree[(lemma,lemma_tree)].items(), lambda x,y:cmp(y[1],x[1]))
+    if LEMMAS_tag.has_key((lemma,tag)):
+        tag_sorted=sorted(LEMMAS_tag[(lemma,tag)].keys(), lambda x,y: cmp(LEMMAS_tag[(lemma,tag)][y], LEMMAS_tag[(lemma,tag)][x]))
+        tag_cnt=sorted(LEMMAS_tag[(lemma,tag)].items(), lambda x,y: cmp(y[1],x[1]))
+    #Voting Approach
+    if LEMMAS_ngram.has_key((prev_lemma,lemma)) and LEMMAS_tag.has_key((lemma,tag)) and LEMMAS_tree.has_key((lemma,lemma_tree)):
+        for each in tree_sorted:
+            if each in ngram_sorted and each in tag_sorted:
+                return each
+    if LEMMAS_tag.has_key((lemma,tag)) and LEMMAS_tree.has_key((lemma,lemma_tree)):
+        for each in tag_sorted:
+            if each in tree_sorted:
+                return each
+    if LEMMAS_ngram.has_key((prev_lemma,lemma)) and LEMMAS_tag.has_key((lemma,tag)):
+        for each in tag_sorted:
+            if each in ngram_sorted:
+                return each
+    if LEMMAS_ngram.has_key((prev_lemma,lemma)) and LEMMAS_tree.has_key((lemma,lemma_tree)):
+        for each in tree_sorted:
+            if each in ngram_sorted:
+                return each
+    m=max(tag_cnt[0][1],tree_cnt[0][1],ngram_cnt[0][1])
+    if m!=0:
+        if(m==tag_cnt[0][1]):
+            return tag_cnt[0][0]
+        if(m==ngram_cnt[0][1]):
+            return ngram_cnt[0][0]
+        if(m==tree_cnt[0][1]):
+            return tree_cnt[0][0]
+    '''if LEMMAS_ngram.has_key((prev_lemma,lemma)):
+        return ngram_sorted[0]
+    if LEMMAS_tag.has_key((lemma,tag)):
+        return tag_sorted[0]
+    if LEMMAS_tree.has_key((lemma,lemma_tree)):
+        return tree_sorted[0]'''
+    if LEMMAS.has_key(lemma):
+        return sorted(LEMMAS[lemma].keys(), lambda x,y: cmp(LEMMAS[lemma][y], LEMMAS[lemma][x]))[0]
+    return lemma
+
+def best_inflection(prev_lemma,lemma,bit,prev_tree_lemma,tree_lemma,tag,prev_tag):
+    a= inflections(prev_lemma,lemma,tree_lemma,tag)
+    if bit==1:
+       f=0
+       if LEMMAS_tree.has_key((prev_lemma,prev_tree_lemma)) and LEMMAS_tag.has_key((prev_lemma,prev_tag)):
+            for e in sorted(LEMMAS_tree[(prev_lemma,prev_tree_lemma)].keys(), lambda x,y: cmp(LEMMAS_tree[(prev_lemma,prev_tree_lemma)][y], LEMMAS_tree[(prev_lemma,prev_tree_lemma)][x])):
+                if e in sorted(LEMMAS_tag[(prev_lemma,prev_tag)].keys(), lambda x,y: cmp(LEMMAS_tag[(prev_lemma,prev_tag)][y], LEMMAS_tag[(prev_lemma,prev_tag)][x])):
+                    a=e+' '+a
+                    f=1
+                    break
+       if f==0:
+           if LEMMAS_tag.has_key((prev_lemma,prev_tag)):
+                a= sorted(LEMMAS_tag[(prev_lemma,prev_tag)].keys(), lambda x,y: cmp(LEMMAS_tag[(prev_lemma,prev_tag)][y], LEMMAS_tag[(prev_lemma,prev_tag)][x]))[0]+ ' '+a
+           elif LEMMAS_tree.has_key((prev_lemma,prev_tree_lemma)):
+                a= sorted(LEMMAS_tree[(prev_lemma,prev_tree_lemma)].keys(), lambda x,y: cmp(LEMMAS_tree[(prev_lemma,prev_tree_lemma)][y], LEMMAS_tree[(prev_lemma,prev_tree_lemma)][x]))[0]+ ' '+a
+           elif LEMMAS.has_key(prev_lemma):
+                a=sorted(LEMMAS[prev_lemma].keys(), lambda x,y: cmp(LEMMAS[prev_lemma][y], LEMMAS[prev_lemma][x]))[0]+ ' '+a
+           else:
+                a=prev_lemma+' '+a
+    return a
+if __name__ == '__main__':
+
+    # Build a simple unigram model on the training data
+    LEMMAS = defaultdict(defaultdict)
+    LEMMAS_ngram = defaultdict(defaultdict)
+    LEMMAS_tree = defaultdict(defaultdict)
+    LEMMAS_tag = defaultdict(defaultdict)
+    n_gram=2
+    if args.t:
+        def combine(a, b): return '%s.%s' % (a, b)
+        def utf8read(file): return codecs.open(file, 'r', 'utf-8')
+        # Build the LEMMAS hash, a two-level dictionary mapping lemmas to inflections to counts
+        for words, lemmas, treestr,tags in izip(utf8read(combine(args.t, args.w)), utf8read(combine(args.t, args.l)),utf8read(combine(args.t, args.d)),utf8read(combine(args.t, args.p))):
+            words=words.rstrip().lower().split()
+            lemmas=lemmas.rstrip().lower().split()
+            tags=tags.rstrip().lower().split()
+            tree = DepTree(treestr)
+            for word, lemma in izip(words, lemmas):
+                LEMMAS[lemma][word] = LEMMAS[lemma].get(word,0) + 1
+            for word, lemma, tag in izip(words, lemmas, tags):
+                LEMMAS_tag[(lemma,tag)][word] = LEMMAS_tag[(lemma,tag)].get(word,0) + 1
+            for i in range(len(lemmas)-n_gram+1):
+                LEMMAS_ngram[(lemmas[i],lemmas[i+1])][words[i+1]]=LEMMAS_ngram[(lemmas[i],lemmas[i+1])].get(words[i+1],0) + 1
+            for word, lemma, node in izip(words, lemmas, tree):
+                LEMMAS_tree[(lemma,lemmas[node.parent_index()-1])][word] = LEMMAS_tree[(lemma,lemmas[node.parent_index()-1])].get(word,0) + 1
+
+    # Choose the most common inflection for each word and output them as a sentence
+    for line in sys.stdin:
+        lemmas,treestr,tags=line.rstrip().lower().split('\t')
+        lemmas = lemmas.rstrip().lower().split()
+        tags=tags.rstrip().lower().split()
+        if len(lemmas)==1:
+            if LEMMAS.has_key(lemmas[0]):
+                print sorted(LEMMAS[lemmas[0]].keys(), lambda x,y: cmp(LEMMAS[lemmas[0]][y], LEMMAS[lemmas[0]][x]))[0]
+            else:
+                print lemmas[0]
+            continue
+        tree = DepTree(treestr)
+        nodes=[]
+        for node in tree:
+            nodes.append(node)
+        print ' '.join([best_inflection(lemmas[i],lemmas[i+1],0==i,lemmas[nodes[i].parent_index()-1],lemmas[nodes[i+1].parent_index()-1],tags[i+1],tags[i]) for i in range(len(lemmas)-n_gram+1)])
